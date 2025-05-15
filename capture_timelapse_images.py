@@ -1,75 +1,73 @@
-import ffmpeg
-import time
 import os
+import time
+import yaml
 import logging
 import datetime
-import cv2
-import yaml
+import ffmpeg
+from pathlib import Path
 
-# Setup logger
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger("pyLapse")
 
-# Load config from YAML
+# Load config.yaml
 with open("config.yaml", "r") as f:
     config = yaml.safe_load(f)
 
-RTSP_URL = config["rtsp_url"]
-INTERVAL = config["interval_minutes"] * 60
-DURATION = config["duration_minutes"] * 60
-OUTPUT_DIR = config["output_dir"]
-FPS = config.get("timelapse_fps", 10)
-USE_UDP = config.get("use_udp", False)
+rtsp_url = config["rtsp_url"]
+interval = config.get("interval_seconds", 60)
+duration_minutes = config.get("duration_minutes", 30)
+output_dir = Path(config.get("output_dir", "snapshots"))
+timelapse_config = config.get("timelapse", {})
+timelapse_enabled = timelapse_config.get("enabled", False)
+fps = timelapse_config.get("fps", 24)
+timelapse_output = timelapse_config.get("output_file", "timelapse.mp4")
 
 # Ensure output directory exists
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+output_dir.mkdir(parents=True, exist_ok=True)
 
-def get_snapshot(output_path):
-    """Use ffmpeg to pull one frame from RTSP stream"""
+# Calculate number of snapshots
+total_snapshots = int((duration_minutes * 60) / interval)
+
+logger.info(f"Starting capture: {total_snapshots} snapshots every {interval} seconds")
+
+def get_timestamped_filename():
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return output_dir / f"snapshot_{timestamp}.jpg"
+
+def get_snapshot(filepath):
     try:
-        input_kwargs = {"rtsp_transport": "udp"} if USE_UDP else {}
         (
             ffmpeg
-            .input(RTSP_URL, **input_kwargs)
-            .output(output_path, vframes=1)
+            .input(rtsp_url, rtsp_transport='tcp', t=1)
+            .output(str(filepath), vframes=1)
             .overwrite_output()
             .run(quiet=True)
         )
-        logger.info(f"Snapshot saved to {output_path}")
+        logger.info(f"Captured snapshot: {filepath}")
     except ffmpeg.Error as e:
-        logger.error(f"Error capturing snapshot: {e.stderr.decode()}")
+        logger.error(f"Failed to capture snapshot: {e.stderr.decode()}")
 
-def create_timelapse(image_dir, output_file, fps):
-    """Create a video from captured images"""
-    images = sorted(
-        [f for f in os.listdir(image_dir) if f.endswith(".jpg")],
-        key=lambda x: os.path.getmtime(os.path.join(image_dir, x))
-    )
+# Capture snapshots
+for i in range(total_snapshots):
+    filepath = get_timestamped_filename()
+    get_snapshot(filepath)
+    if i < total_snapshots - 1:
+        time.sleep(interval)
 
-    if not images:
-        logger.warning("No images found for timelapse.")
-        return
+# Create timelapse video
+if timelapse_enabled:
+    logger.info("Creating timelapse video...")
+    try:
+        (
+            ffmpeg
+            .input(str(output_dir / "snapshot_*.jpg"), pattern_type='glob', framerate=fps)
+            .output(timelapse_output)
+            .overwrite_output()
+            .run(quiet=True)
+        )
+        logger.info(f"Timelapse video created: {timelapse_output}")
+    except ffmpeg.Error as e:
+        logger.error(f"Failed to create timelapse video: {e.stderr.decode()}")
 
-    first_frame = cv2.imread(os.path.join(image_dir, images[0]))
-    height, width, _ = first_frame.shape
-
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_file, fourcc, fps, (width, height))
-
-    for img in images:
-        frame = cv2.imread(os.path.join(image_dir, img))
-        out.write(frame)
-
-    out.release()
-    logger.info(f"Timelapse video saved to {output_file}")
-
-# Main loop
-start_time = time.time()
-while (time.time() - start_time) < DURATION:
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    snapshot_file = os.path.join(OUTPUT_DIR, f"{timestamp}.jpg")
-    get_snapshot(snapshot_file)
-    time.sleep(INTERVAL)
-
-# Generate timelapse
-create_timelapse(OUTPUT_DIR, os.path.join(OUTPUT_DIR, "timelapse.mp4"), FPS)
+logger.info("Done.")

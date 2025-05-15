@@ -1,6 +1,8 @@
 rtsp_url: rtsp://<username>:<passwort>@123.45.6.78/live1
-interval_minutes: 2
-duration_minutes: 10
-output_dir: snapshots
-timelapse_fps: 24
-use_udp: true
+interval_seconds: 60       # Time between snapshots
+duration_minutes: 30       # Total run time
+output_dir: "snapshots"    # Where to save images
+timelapse:
+  enabled: true
+  fps: 24                  # Frames per second for the output video
+  output_file: "timelapse.mp4"
