@@ -1,0 +1,6 @@
+rtsp_url: rtsp://<username>:<passwort>@123.45.6.78/live1
+interval_minutes: 2
+duration_minutes: 10
+output_dir: snapshots
+timelapse_fps: 24
+use_udp: true
